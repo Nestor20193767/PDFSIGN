@@ -1,4 +1,4 @@
-# SecureSign: Steganographic PDF Signature System 🛡️✍️
+# SecureSign: Steganographic PDF Signature System 
 
 **SecureSign** is a web-based digital signature platform that goes beyond visual stamping. It uses **LSB Steganography** to embed invisible metadata (device fingerprint, timestamp, user email, and a unique token) directly into the pixels of the signature and the PDF file structure.
 
