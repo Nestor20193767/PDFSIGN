@@ -72,10 +72,16 @@ def extraer_metadatos_de_imagen(img_pil):
 def index():
     return render_template('index.html')
 
+# NUEVA RUTA: Micro-frontend de edición
+@app.route('/editor')
+def editor():
+    return render_template('editor.html')
+
 
 @app.route('/procesar_firma', methods=['POST'])
 def procesar_firma():
     try:
+        # Validaciones básicas
         if 'pdf_file' not in request.files:
             return jsonify({'status': 'error', 'msg': 'Falta el archivo PDF'}), 400
 
@@ -84,21 +90,27 @@ def procesar_firma():
         email_usuario = request.form['email']
         device_data = request.form['device_data']
 
-        # 1. Procesar la firma (Canvas viene transparente)
+        # --- NUEVOS PARÁMETROS DE POSICIONAMIENTO ---
+        # Recibimos coordenadas y tamaño (en puntos PDF)
+        try:
+            pos_x = float(request.form.get('x', 100))
+            pos_y = float(request.form.get('y', 100))
+            width = float(request.form.get('w', 200))
+            height = float(request.form.get('h', 100))
+            page_num = int(request.form.get('page_num', 1)) - 1  # Convertir a 0-index
+        except:
+            # Fallback si falla
+            pos_x, pos_y, width, height, page_num = 100, 100, 200, 100, 0
+
+        # 1. Procesar la firma (Aplanar transparencia)
         image_data = firma_base64.split(",")[1]
         img_bytes = base64.b64decode(image_data)
         img_original = Image.open(io.BytesIO(img_bytes)).convert('RGBA')
 
-        # --- SOLUCIÓN CRÍTICA: APLANAR TRANSPARENCIA ---
-        # Creamos un fondo blanco
         fondo_blanco = Image.new("RGB", img_original.size, (255, 255, 255))
-        # Pegamos la firma transparente encima (usando el canal alfa como máscara)
         fondo_blanco.paste(img_original, mask=img_original.split()[3])
 
-        # Redimensionar si es muy grande (opcional, ayuda a que no se comprima)
-        # fondo_blanco.thumbnail((300, 150))
-
-        # 2. Preparar Metadatos
+        # 2. Esteganografía
         token_unico = str(uuid.uuid4())
         datos_dict = {
             "token": token_unico,
@@ -107,38 +119,36 @@ def procesar_firma():
             "dispositivo": json.loads(device_data)
         }
         json_string = json.dumps(datos_dict)
-
-        # 3. Inyectar Esteganografía en la imagen PLANA (RGB)
         img_con_datos = ocultar_metadatos(fondo_blanco, json_string)
 
         img_byte_arr = io.BytesIO()
-        # Guardamos como PNG con máxima calidad
-        img_con_datos.save(img_byte_arr, format='PNG', compress_level=0)
+        img_con_datos.save(img_byte_arr, format='PNG')
         img_final_bytes = img_byte_arr.getvalue()
 
-        # 4. Insertar en el PDF
+        # 3. Insertar en el PDF (POSICIÓN EXACTA)
         doc = fitz.open(stream=pdf_file.read(), filetype="pdf")
-        page = doc[-1]
 
-        # Ubicación: Esquina inferior derecha
-        rect = fitz.Rect(page.rect.width - 250, page.rect.height - 150, page.rect.width - 50, page.rect.height - 50)
+        # Validar número de página
+        if page_num < 0 or page_num >= len(doc):
+            page_num = 0
 
-        # Insertamos la imagen. PyMuPDF respetará los bits al ser RGB opaco.
-        page.insert_image(rect, stream=img_final_bytes)
+        page = doc[page_num]
 
-        # --- DOBLE FACTOR DE SEGURIDAD ---
-        # Guardamos TAMBIÉN los metadatos en el propio archivo PDF (invisible al usuario)
-        # Esto garantiza que si la imagen falla, el PDF sigue siendo validable.
+        # PyMuPDF usa un objeto Rect(x0, y0, x1, y1)
+        rect = fitz.Rect(pos_x, pos_y, pos_x + width, pos_y + height)
+
+        # Insertar imagen
+        page.insert_image(rect, stream=img_final_bytes, overlay=True)
+
+        # Guardar metadatos en el PDF (Backup)
         doc.set_metadata({
             **doc.metadata,
-            "keywords": json_string,  # Usamos el campo keywords para guardar el JSON
-            "subject": f"Firmado digitalmente por {email_usuario}"
+            "keywords": json_string,
+            "subject": f"Firmado por {email_usuario}"
         })
 
         output_filename = f"firmado_{token_unico[:8]}.pdf"
         output_path = os.path.join(UPLOAD_FOLDER, output_filename)
-
-        # Guardamos sin compresión extra
         doc.save(output_path, garbage=0, deflate=False)
 
         return jsonify({
