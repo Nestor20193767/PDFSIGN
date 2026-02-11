@@ -1,0 +1,239 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <title>Editor de Posición</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script>pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';</script>
+    <style>
+        body { margin: 0; overflow: hidden; background: #333; }
+
+        /* CONTENEDOR PRINCIPAL: Define el tamaño del "mundo" */
+        #canvas-container {
+            position: relative;
+            margin: 0 auto;
+            box-shadow: 0 0 20px rgba(0,0,0,0.5);
+            background: white; /* Fondo blanco por si el PDF tarda */
+        }
+
+        /* CAPA 1: EL PDF (AL FONDO) */
+        canvas {
+            display: block;
+            position: absolute; /* Crucial para que no empuje a la firma */
+            top: 0; left: 0;
+            z-index: 1;
+        }
+
+        /* CAPA 2: LA FIRMA (AL FRENTE) */
+        .signature-box {
+            position: absolute;
+            border: 2px solid #2563eb;
+            background-color: rgba(37, 99, 235, 0.1); /* Azulito transparente para verla siempre */
+            cursor: grab;
+            user-select: none;
+            z-index: 100; /* Siempre encima del canvas (z-index 1) */
+        }
+
+        .signature-box:active {
+            cursor: grabbing;
+            border-color: #facc15; /* Amarillo al agarrar */
+        }
+
+        .resize-handle {
+            width: 16px; height: 16px;
+            background: #2563eb;
+            position: absolute;
+            bottom: -6px; right: -6px;
+            cursor: nwse-resize;
+            border-radius: 50%;
+            border: 2px solid white;
+            z-index: 101;
+        }
+
+        .controls {
+            position: fixed; bottom: 30px; left: 50%; transform: translateX(-50%);
+            background: #1f2937; padding: 12px 30px; border-radius: 50px;
+            color: white; display: flex; gap: 20px; align-items: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
+            z-index: 1000;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="wrapper" class="h-screen w-screen flex flex-col items-center justify-center overflow-auto bg-gray-800 p-8">
+        <div id="canvas-container">
+            <canvas id="pdf-render"></canvas>
+
+            <div id="signature-box" class="signature-box hidden">
+                <img id="sig-img" class="w-full h-full object-contain pointer-events-none">
+                <div class="resize-handle"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="controls">
+        <button onclick="changePage(-1)" class="hover:text-blue-400 font-bold"><i class="fas fa-arrow-left"></i> Anterior</button>
+        <span id="page-num" class="font-mono font-bold text-blue-400">Pág 1</span>
+        <button onclick="changePage(1)" class="hover:text-blue-400 font-bold">Siguiente <i class="fas fa-arrow-right"></i></button>
+        <div class="h-6 w-px bg-gray-600 mx-2"></div>
+        <button onclick="confirmPosition()" class="bg-blue-600 hover:bg-blue-500 text-white px-6 py-2 rounded-full font-bold shadow-lg transition transform hover:scale-105">
+            Confirmar Ubicación
+        </button>
+    </div>
+
+    <script>
+        let pdfDoc = null;
+        let pageNum = 1;
+        let pdfScale = 1.0;
+
+        const container = document.getElementById('canvas-container');
+        const canvas = document.getElementById('pdf-render');
+        const ctx = canvas.getContext('2d');
+        const sigBox = document.getElementById('signature-box');
+        const sigImg = document.getElementById('sig-img');
+
+        // --- COMUNICACIÓN ---
+        window.addEventListener('message', async (event) => {
+            const { type, pdfBlob, signatureImg } = event.data;
+            if (type === 'INIT_EDITOR') {
+                sigImg.src = signatureImg;
+
+                // Cargar PDF
+                const loadingTask = pdfjsLib.getDocument(pdfBlob);
+                pdfDoc = await loadingTask.promise;
+                renderPage(pageNum);
+
+                // MOSTRAR FIRMA CENTRADA INICIALMENTE
+                sigBox.classList.remove('hidden');
+                sigBox.style.width = "200px";
+                sigBox.style.height = "100px";
+                // Centramos temporalmente (se ajustará al renderizar)
+                sigBox.style.top = "100px";
+                sigBox.style.left = "100px";
+            }
+        });
+
+        // --- RENDERIZADO ROBUSTO ---
+        async function renderPage(num) {
+            const page = await pdfDoc.getPage(num);
+            const viewportInitial = page.getViewport({scale: 1});
+
+            // Calcular escala: 90% del ancho de pantalla o máximo 1000px
+            const availableWidth = window.innerWidth * 0.9;
+            const targetWidth = Math.min(availableWidth, 1000);
+            pdfScale = targetWidth / viewportInitial.width;
+
+            const viewport = page.getViewport({scale: pdfScale});
+
+            // 1. DIMENSIONAR CONTENEDOR (CRÍTICO para position:absolute)
+            container.style.width = `${viewport.width}px`;
+            container.style.height = `${viewport.height}px`;
+
+            // 2. DIMENSIONAR CANVAS
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+
+            // 3. RENDERIZAR PDF
+            const renderContext = { canvasContext: ctx, viewport: viewport };
+            await page.render(renderContext).promise;
+
+            // 4. TRUCO "NUCLEAR": MOVER FIRMA AL FINAL DEL DOM
+            // Esto asegura que el navegador la pinte DESPUÉS del canvas
+            container.appendChild(sigBox);
+
+            // Actualizar UI
+            document.getElementById('page-num').innerText = `Pág ${num} / ${pdfDoc.numPages}`;
+        }
+
+        function changePage(offset) {
+            if (!pdfDoc) return;
+            const newPage = pageNum + offset;
+            if (newPage >= 1 && newPage <= pdfDoc.numPages) {
+                pageNum = newPage;
+                renderPage(pageNum);
+            }
+        }
+
+        // --- LOGICA DRAG & DROP (MEJORADA) ---
+        let isDragging = false, isResizing = false;
+        let startX, startY, startLeft, startTop, startW, startH;
+
+        // Eventos Mouse y Touch para la caja
+        sigBox.addEventListener('mousedown', startDrag);
+        sigBox.addEventListener('touchstart', startDrag, {passive: false});
+
+        function startDrag(e) {
+            // Unificar evento touch/mouse
+            const evt = e.touches ? e.touches[0] : e;
+
+            if (e.target.classList.contains('resize-handle')) {
+                isResizing = true;
+                startX = evt.clientX; startY = evt.clientY;
+                startW = sigBox.offsetWidth; startH = sigBox.offsetHeight;
+            } else {
+                isDragging = true;
+                startX = evt.clientX; startY = evt.clientY;
+                startLeft = sigBox.offsetLeft; startTop = sigBox.offsetTop;
+            }
+            e.preventDefault(); // Evitar scroll en móbiles
+            e.stopPropagation();
+        }
+
+        window.addEventListener('mousemove', moveDrag);
+        window.addEventListener('touchmove', moveDrag, {passive: false});
+
+        function moveDrag(e) {
+            if (!isDragging && !isResizing) return;
+            const evt = e.touches ? e.touches[0] : e;
+            e.preventDefault();
+
+            let dx = evt.clientX - startX;
+            let dy = evt.clientY - startY;
+
+            if (isDragging) {
+                // Limitar movimiento dentro del canvas
+                let newLeft = startLeft + dx;
+                let newTop = startTop + dy;
+
+                // Límites simples
+                const maxLeft = container.offsetWidth - sigBox.offsetWidth;
+                const maxTop = container.offsetHeight - sigBox.offsetHeight;
+
+                // Aplicar con límites (opcional, si quieres libertad quita Math.max/min)
+                sigBox.style.left = `${Math.min(Math.max(0, newLeft), maxLeft)}px`;
+                sigBox.style.top = `${Math.min(Math.max(0, newTop), maxTop)}px`;
+
+            } else if (isResizing) {
+                sigBox.style.width = `${Math.max(50, startW + dx)}px`;
+                sigBox.style.height = `${Math.max(30, startH + dy)}px`;
+            }
+        }
+
+        window.addEventListener('mouseup', endDrag);
+        window.addEventListener('touchend', endDrag);
+
+        function endDrag() { isDragging = false; isResizing = false; }
+
+        // --- ENVIAR ---
+        function confirmPosition() {
+            if(!pdfDoc) return;
+            const rect = sigBox.getBoundingClientRect();
+            const containerRect = container.getBoundingClientRect(); // Usar container, no canvas directo
+
+            const result = {
+                x: (rect.left - containerRect.left) / pdfScale,
+                y: (rect.top - containerRect.top) / pdfScale,
+                w: sigBox.offsetWidth / pdfScale,
+                h: sigBox.offsetHeight / pdfScale,
+                page_num: pageNum
+            };
+            window.parent.postMessage({ type: 'POSITION_CONFIRMED', ...result }, '*');
+        }
+
+        // AVISAR QUE ESTAMOS LISTOS
+        window.onload = () => window.parent.postMessage({ type: 'EDITOR_LOADED' }, '*');
+    </script>
+</body>
+</html>
