@@ -28,9 +28,4 @@ Upload a signed PDF to audit its integrity. The system extracts the hidden JSON 
 
 ---
 
-## 🛠️ Installation & Setup
-
-### Prerequisites
-* Python 3.8+
-* pip (Python Package Manager)
 
