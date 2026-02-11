@@ -18,7 +18,7 @@
         <div class="max-w-4xl mx-auto flex items-center justify-between">
             <h1 class="text-xl font-bold text-slate-800 flex items-center">
                 <i class="fas fa-file-signature text-blue-600 mr-2"></i>
-                SecureSign <span class="text-xs ml-2 bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full"> KIW PROTO</span>
+                SecureSign <span class="text-xs ml-2 bg-blue-100 text-blue-800 px-2 py-0.5 rounded-full">KIW PROTO</span>
             </h1>
         </div>
     </nav>
@@ -51,11 +51,12 @@
                         <button type="button" onclick="clearCanvas()" class="absolute top-2 right-2 text-xs bg-white border px-2 py-1 rounded shadow text-red-500">Borrar</button>
                     </div>
                 </div>
-                <button type="button" onclick="enviarFirma()" class="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition shadow flex justify-center items-center">
-                    <span id="btnText">Firmar Documento</span>
-                    <div id="loading" class="loader ml-2 hidden"></div>
+                <button type="button" onclick="abrirEditor()" class="w-full bg-blue-600 text-white py-3 rounded-lg font-bold hover:bg-blue-700 transition shadow flex justify-center items-center">
+                    <span id="btnText">Continuar y Ubicar Firma</span>
+                    <i class="fas fa-arrow-right ml-2"></i>
                 </button>
             </form>
+
             <div id="resultSign" class="hidden mt-6 p-4 bg-green-50 border border-green-200 rounded-lg text-center">
                 <h3 class="text-green-800 font-bold">¡Firma Procesada!</h3>
                 <a id="downloadLink" href="#" class="inline-block mt-2 bg-green-600 text-white px-6 py-2 rounded-full font-bold hover:bg-green-700 transition">Descargar PDF Firmado</a>
@@ -81,11 +82,26 @@
                     </button>
                 </div>
 
-                <div id="validationResult" class="mt-6 text-left hidden">
-                    </div>
+                <div id="validationResult" class="mt-6 text-left hidden"></div>
             </div>
         </div>
 
+    </div>
+
+    <div id="editorModal" class="fixed inset-0 bg-black bg-opacity-75 hidden z-50 flex items-center justify-center">
+        <div class="bg-white w-full h-full md:w-[90%] md:h-[90%] rounded-lg shadow-2xl relative overflow-hidden flex flex-col">
+            <div class="bg-slate-800 p-4 text-white flex justify-between items-center">
+                <h3 class="font-bold"><i class="fas fa-arrows-alt text-blue-400 mr-2"></i>Ubica tu firma</h3>
+                <button onclick="cerrarEditor()" class="text-gray-300 hover:text-white"><i class="fas fa-times text-xl"></i></button>
+            </div>
+
+            <iframe id="editorFrame" src="/editor" class="w-full h-full border-0"></iframe>
+
+            <div id="finalLoader" class="absolute inset-0 bg-white bg-opacity-90 hidden flex flex-col items-center justify-center z-50">
+                <div class="loader mb-4 border-t-blue-600 w-12 h-12"></div>
+                <p class="text-blue-900 font-bold">Firmando Documento...</p>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -94,17 +110,96 @@
             document.getElementById('view-firmar').classList.add('hidden');
             document.getElementById('view-validar').classList.add('hidden');
 
-            // Reset estilos tabs
             document.getElementById('tab-firmar').className = "flex-1 p-4 font-semibold text-slate-500 hover:bg-slate-50 transition-all";
             document.getElementById('tab-validar').className = "flex-1 p-4 font-semibold text-slate-500 hover:bg-slate-50 transition-all";
 
-            // Activar
             document.getElementById(`view-${tab}`).classList.remove('hidden');
-            const activeClass = "flex-1 p-4 font-semibold text-blue-600 border-b-2 border-blue-600 bg-blue-50 transition-all";
-            document.getElementById(`tab-${tab}`).className = activeClass;
+            document.getElementById(`tab-${tab}`).className = "flex-1 p-4 font-semibold text-blue-600 border-b-2 border-blue-600 bg-blue-50 transition-all";
+
+            // CORRECCIÓN CRÍTICA: Redimensionar el canvas al volver a la pestaña firmar
+            if (tab === 'firmar') {
+                setTimeout(resizeCanvas, 50);
+            }
         }
 
-        // --- VALIDAR PDF (NUEVA LÓGICA VISUAL) ---
+        // --- LÓGICA DEL CANVAS (DIBUJO) MEJORADA ---
+        const canvas = document.getElementById('signature-pad');
+        const ctx = canvas.getContext('2d');
+        let isDrawing = false;
+
+        function resizeCanvas() {
+            // Guardar el contenido actual si quisieras (opcional), aquí lo reseteamos para ajustar al contenedor
+            const rect = canvas.parentElement.getBoundingClientRect();
+
+            // Asignar el tamaño real del elemento HTML al bitmap del canvas
+            canvas.width = rect.width;
+            canvas.height = rect.height; // Usar la altura del contenedor padre
+
+            // Re-configurar el estilo del pincel (se borra al cambiar el tamaño)
+            ctx.lineWidth = 2;
+            ctx.lineJoin = "round";
+            ctx.lineCap = "round";
+            ctx.strokeStyle = "#000000"; // Color negro explícito
+        }
+
+        // Obtener coordenadas exactas (mouse o táctil)
+        function getPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.touches ? e.touches[0].clientX : e.clientX;
+            const clientY = e.touches ? e.touches[0].clientY : e.clientY;
+            return {
+                x: clientX - rect.left,
+                y: clientY - rect.top
+            };
+        }
+
+        // Eventos de dibujo
+        function startDrawing(e) {
+            isDrawing = true;
+            ctx.beginPath();
+            const pos = getPos(e);
+            ctx.moveTo(pos.x, pos.y);
+            e.preventDefault(); // Evitar scroll en móviles
+        }
+
+        function draw(e) {
+            if (!isDrawing) return;
+            const pos = getPos(e);
+            ctx.lineTo(pos.x, pos.y);
+            ctx.stroke();
+            e.preventDefault();
+        }
+
+        function stopDrawing() {
+            isDrawing = false;
+        }
+
+        // Listeners Mouse
+        canvas.addEventListener('mousedown', startDrawing);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('mouseup', stopDrawing);
+        canvas.addEventListener('mouseleave', stopDrawing); // Importante si te sales del cuadro
+
+        // Listeners Touch (Móviles)
+        canvas.addEventListener('touchstart', startDrawing, { passive: false });
+        canvas.addEventListener('touchmove', draw, { passive: false });
+        canvas.addEventListener('touchend', stopDrawing);
+
+        // Inicialización
+        window.addEventListener("resize", resizeCanvas);
+        // Esperar un momento a que el DOM cargue estilos para ajustar tamaño
+        setTimeout(resizeCanvas, 100);
+
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            // Restaurar estilos por si acaso
+            ctx.lineWidth = 2;
+            ctx.lineJoin = "round";
+            ctx.lineCap = "round";
+            ctx.strokeStyle = "#000000";
+        }
+
+        // --- VALIDAR PDF (Tu código existente de validación) ---
         async function validarPDF() {
             const fileInput = document.getElementById('pdfValidate');
             const resultDiv = document.getElementById('validationResult');
@@ -113,11 +208,10 @@
 
             if (!fileInput.files[0]) return alert("Por favor selecciona un archivo PDF.");
 
-            // UI Loading
             btnText.innerText = "Analizando...";
             loader.classList.remove('hidden');
             resultDiv.classList.add('hidden');
-            resultDiv.innerHTML = ""; // Limpiar anterior
+            resultDiv.innerHTML = "";
 
             const formData = new FormData();
             formData.append('file', fileInput.files[0]);
@@ -125,108 +219,130 @@
             try {
                 const res = await fetch('/validar_pdf', { method: 'POST', body: formData });
                 const data = await res.json();
-
                 resultDiv.classList.remove('hidden');
 
                 if (data.status === 'success') {
-                    // Generar HTML para cada firma encontrada
-                    let htmlContent = `<div class="bg-green-100 border-l-4 border-green-500 text-green-700 p-4 mb-4 rounded shadow-sm">
-                        <p class="font-bold">✅ Documento Auténtico</p>
-                        <p class="text-sm">Se encontraron ${data.cantidad} firma(s) válida(s).</p>
-                    </div>`;
+                    let htmlContent = `
+                        <div class="flex items-center justify-center mb-6">
+                            <span class="bg-green-100 text-green-800 text-xs font-bold px-3 py-1 rounded-full border border-green-200 shadow-sm">
+                                <i class="fas fa-check-circle mr-1"></i> INTEGRIDAD VERIFICADA: ${data.cantidad} FIRMA(S)
+                            </span>
+                        </div>`;
 
                     data.datos.forEach((firma, index) => {
-                        // Formatear datos del dispositivo para mostrar
                         const device = firma.dispositivo || {};
-                        const infoDispositivo = `Pantalla: ${device.screen || 'N/A'}, Cores: ${device.cores || 'N/A'}`;
+                        const fecha = new Date(firma.fecha).toLocaleString('es-PE');
 
                         htmlContent += `
-                        <div class="bg-white border border-slate-200 rounded-lg shadow-md p-5 mb-4 relative overflow-hidden">
-                            <div class="absolute top-0 right-0 bg-blue-600 text-white text-xs px-2 py-1 rounded-bl">Firma #${index + 1}</div>
-
-                            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div>
-                                    <p class="text-xs text-slate-400 uppercase font-bold">Firmante</p>
-                                    <p class="text-slate-800 font-medium break-all"><i class="fas fa-envelope text-blue-500 mr-2"></i>${firma.email}</p>
+                        <div class="bg-white border border-slate-200 rounded-2xl shadow-lg mb-6 overflow-hidden transform transition-all hover:scale-[1.01]">
+                            <div class="bg-slate-800 px-5 py-3 flex justify-between items-center border-b border-slate-700">
+                                <div class="flex items-center space-x-2">
+                                    <i class="fas fa-certificate text-yellow-400"></i>
+                                    <span class="text-white font-bold text-xs tracking-widest uppercase">Certificado Digital #${index + 1}</span>
+                                </div>
+                                <span class="bg-blue-600 text-white text-[10px] px-2 py-0.5 rounded font-bold">VÁLIDO</span>
+                            </div>
+                            <div class="p-6">
+                                <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6 pb-6 border-b border-slate-100">
+                                    <div class="flex flex-col">
+                                        <label class="text-[10px] uppercase font-bold text-slate-400 mb-1">Firmante Autorizado</label>
+                                        <div class="flex items-center">
+                                            <div class="w-8 h-8 rounded bg-blue-50 flex items-center justify-center text-blue-600 mr-3"><i class="fas fa-user-shield"></i></div>
+                                            <span class="text-slate-800 font-semibold text-sm break-all">${firma.email}</span>
+                                        </div>
+                                    </div>
+                                    <div class="flex flex-col">
+                                        <label class="text-[10px] uppercase font-bold text-slate-400 mb-1">Estampado de Tiempo</label>
+                                        <div class="flex items-center">
+                                            <div class="w-8 h-8 rounded bg-blue-50 flex items-center justify-center text-blue-600 mr-3"><i class="fas fa-clock"></i></div>
+                                            <span class="text-slate-800 font-semibold text-sm">${fecha}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                                <div class="mb-6">
+                                    <label class="text-[10px] uppercase font-bold text-slate-400 mb-1 block">Token Único de Integridad (UUID)</label>
+                                    <div class="bg-slate-50 p-3 rounded border border-slate-200 flex items-center">
+                                        <i class="fas fa-key text-slate-400 mr-3"></i>
+                                        <code class="text-xs text-blue-700 font-mono break-all">${firma.token}</code>
+                                    </div>
                                 </div>
                                 <div>
-                                    <p class="text-xs text-slate-400 uppercase font-bold">Fecha de Firma</p>
-                                    <p class="text-slate-800"><i class="far fa-clock text-blue-500 mr-2"></i>${new Date(firma.fecha).toLocaleString()}</p>
-                                </div>
-                                <div class="col-span-1 md:col-span-2">
-                                    <p class="text-xs text-slate-400 uppercase font-bold">Token Único (UUID)</p>
-                                    <p class="font-mono text-xs bg-slate-100 p-2 rounded border border-slate-200 text-slate-600 select-all">${firma.token}</p>
-                                </div>
-                                <div class="col-span-1 md:col-span-2 mt-2 pt-2 border-t border-slate-100">
-                                    <p class="text-xs text-slate-400 uppercase font-bold">Huella del Dispositivo</p>
-                                    <p class="text-xs text-slate-500 mt-1">
-                                        <i class="fas fa-mobile-alt mr-1"></i> ${infoDispositivo} <br>
-                                        <i class="fas fa-globe mr-1"></i> ${device.ua ? device.ua.substring(0, 50) + '...' : 'N/A'}
-                                    </p>
+                                    <label class="text-[10px] uppercase font-bold text-slate-400 mb-2 block flex items-center"><i class="fas fa-fingerprint mr-1"></i> Huella Digital del Dispositivo</label>
+                                    <div class="bg-slate-50 rounded-lg border border-slate-100 p-3">
+                                        <div class="grid grid-cols-2 gap-4 mb-3">
+                                            <div><span class="text-[10px] text-slate-500 block">Resolución</span><span class="text-xs font-bold text-slate-700"><i class="fas fa-desktop text-slate-300 mr-1"></i>${device.screen || 'Desc.'}</span></div>
+                                            <div><span class="text-[10px] text-slate-500 block">Núcleos CPU</span><span class="text-xs font-bold text-slate-700"><i class="fas fa-microchip text-slate-300 mr-1"></i>${device.cores || '1'} Cores</span></div>
+                                        </div>
+                                        <div class="border-t border-slate-200 pt-2">
+                                            <span class="text-[10px] text-slate-500 block mb-1">User Agent (Navegador)</span>
+                                            <div class="text-[10px] text-slate-600 font-mono bg-white p-2 rounded border border-slate-100 overflow-x-auto whitespace-nowrap">${device.ua || 'No disponible'}</div>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
                         </div>`;
                     });
-
                     resultDiv.innerHTML = htmlContent;
-
                 } else {
-                    // CASO ERROR / NO FIRMADO
-                    resultDiv.innerHTML = `
-                    <div class="bg-red-50 border-l-4 border-red-500 text-red-700 p-6 rounded shadow-sm text-center">
-                        <i class="fas fa-exclamation-triangle text-3xl mb-3 text-red-400"></i>
-                        <h3 class="font-bold text-lg">Firma No Detectada</h3>
-                        <p class="text-sm mt-2">No se encontraron metadatos de seguridad en este archivo.</p>
-                        <p class="text-xs mt-2 text-red-500">Posibles causas: El archivo fue modificado, comprimido o no fue firmado por este sistema.</p>
-                    </div>`;
+                    resultDiv.innerHTML = `<div class="bg-white p-8 rounded-xl shadow-lg border-2 border-red-50 text-center"><div class="w-16 h-16 bg-red-100 text-red-500 rounded-full flex items-center justify-center mx-auto mb-4 text-2xl"><i class="fas fa-times-circle"></i></div><h3 class="text-red-700 font-bold text-lg">Firma No Detectada</h3><p class="text-slate-500 text-sm mt-2">El documento no contiene metadatos válidos o ha sido modificado.</p></div>`;
                 }
-
             } catch (err) {
                 console.error(err);
-                resultDiv.classList.remove('hidden');
-                resultDiv.innerHTML = `<div class="bg-red-100 text-red-700 p-4 rounded">Error de conexión con el servidor.</div>`;
+                resultDiv.innerHTML = `<div class="bg-red-100 text-red-700 p-4 rounded text-center">Error de conexión.</div>`;
             } finally {
                 btnText.innerText = "Verificar Integridad";
                 loader.classList.add('hidden');
             }
         }
 
-        // --- INICIALIZAR CANVAS (MISMO CÓDIGO ANTERIOR) ---
-        const canvas = document.getElementById('signature-pad');
-        const ctx = canvas.getContext('2d');
-        let isDrawing = false;
+        // --- GESTIÓN DEL MODAL Y ENVÍO ---
+        let finalPdfFile = null;
+        let editorDataQueue = null;
 
-        function resizeCanvas() {
-            canvas.width = canvas.offsetWidth;
-            canvas.height = canvas.offsetHeight;
-            ctx.lineWidth = 2; ctx.lineJoin = "round"; ctx.lineCap = "round"; ctx.strokeStyle = "#000";
-        }
-        window.addEventListener("resize", resizeCanvas);
-        setTimeout(resizeCanvas, 500); // Delay para asegurar render
-
-        // Eventos Canvas (Mouse y Touch)
-        function getPos(e) {
-            const rect = canvas.getBoundingClientRect();
-            return {
-                x: (e.touches ? e.touches[0].clientX : e.clientX) - rect.left,
-                y: (e.touches ? e.touches[0].clientY : e.clientY) - rect.top
-            };
-        }
-        ['mousedown', 'touchstart'].forEach(e => canvas.addEventListener(e, (ev) => { isDrawing=true; ctx.beginPath(); ctx.moveTo(getPos(ev).x, getPos(ev).y); ev.preventDefault(); }));
-        ['mousemove', 'touchmove'].forEach(e => canvas.addEventListener(e, (ev) => { if(!isDrawing)return; ctx.lineTo(getPos(ev).x, getPos(ev).y); ctx.stroke(); ev.preventDefault(); }));
-        ['mouseup', 'touchend'].forEach(e => canvas.addEventListener(e, () => isDrawing=false));
-        function clearCanvas(){ ctx.clearRect(0,0,canvas.width,canvas.height); }
-
-        // --- ENVIAR FIRMA (AJUSTADO PARA EL NUEVO HTML) ---
-        async function enviarFirma() {
+        async function abrirEditor() {
             const email = document.getElementById('email').value;
-            const pdfFile = document.getElementById('pdfInput').files[0];
-            const btn = document.getElementById('btnText');
-            const load = document.getElementById('loading');
+            const pdfInput = document.getElementById('pdfInput');
+            if(!email || !pdfInput.files[0]) return alert("Completa email y sube PDF");
 
-            if(!email || !pdfFile) return alert("Completa todos los campos");
+            const blank = document.createElement('canvas');
+            blank.width = canvas.width; blank.height = canvas.height;
+            // Verificación simple de canvas vacío
+            if(canvas.toDataURL().length < 2000) return alert("Por favor dibuja tu firma"); // Umbral básico
 
-            btn.innerText = "Procesando..."; load.classList.remove('hidden');
+            finalPdfFile = pdfInput.files[0];
+            const signatureDataUrl = canvas.toDataURL();
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                editorDataQueue = { type: 'INIT_EDITOR', pdfBlob: e.target.result, signatureImg: signatureDataUrl };
+                document.getElementById('editorModal').classList.remove('hidden');
+                document.getElementById('editorFrame').src = '/editor';
+            };
+            reader.readAsArrayBuffer(finalPdfFile);
+        }
+
+        function cerrarEditor() {
+            document.getElementById('editorModal').classList.add('hidden');
+            editorDataQueue = null;
+        }
+
+        window.addEventListener('message', (event) => {
+            if (event.data.type === 'EDITOR_LOADED') {
+                if (editorDataQueue) {
+                    document.getElementById('editorFrame').contentWindow.postMessage(editorDataQueue, '*');
+                    editorDataQueue = null;
+                }
+            }
+            if (event.data.type === 'POSITION_CONFIRMED') {
+                enviarFirmaFinal(event.data);
+            }
+        });
+
+        async function enviarFirmaFinal(coords) {
+            const loader = document.getElementById('finalLoader');
+            loader.classList.remove('hidden');
+
+            const email = document.getElementById('email').value;
 
             const metadata = {
                 ua: navigator.userAgent,
@@ -236,21 +352,27 @@
 
             const formData = new FormData();
             formData.append('email', email);
-            formData.append('pdf_file', pdfFile);
+            formData.append('pdf_file', finalPdfFile);
             formData.append('firma_base64', canvas.toDataURL());
             formData.append('device_data', JSON.stringify(metadata));
+            formData.append('x', coords.x);
+            formData.append('y', coords.y);
+            formData.append('w', coords.w);
+            formData.append('h', coords.h);
+            formData.append('page_num', coords.page_num);
 
             try {
                 const res = await fetch('/procesar_firma', { method: 'POST', body: formData });
                 const data = await res.json();
                 if(data.status === 'success') {
+                    cerrarEditor();
                     document.getElementById('resultSign').classList.remove('hidden');
                     document.getElementById('downloadLink').href = data.download_url;
                 } else {
                     alert("Error: " + data.msg);
                 }
             } catch(e) { alert("Error de servidor"); }
-            finally { btn.innerText = "Firmar Documento"; load.classList.add('hidden'); }
+            finally { loader.classList.add('hidden'); }
         }
     </script>
 </body>
